@@ -104,7 +104,7 @@ As an AI assistant, I can help answer questions, provide information, and have g
 
 Enjoy!
 
-The example file can be found [here](https://github.com/thinhdanggroup/chat-deepseek-api/blob/main/examples/simple_app.py)
+The example file can be found [here](https://github.com/jcondori/chat-deepseek-api/blob/main/examples/simple_app.py)
 
 ## License
 

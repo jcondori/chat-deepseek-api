@@ -24,7 +24,7 @@ setup(
     long_description=read_long_description(),
     long_description_content_type='text/markdown',
     author='Thinh Dang',
-    url='https://github.com/thinhdanggroup/chat-deepseek-api',
+    url='https://github.com/jcondori/chat-deepseek-api',
     license_files=('LICENSE',),
     classifiers=[
         'Development Status :: 4 - Beta',
