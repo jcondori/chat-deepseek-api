@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -133,8 +134,9 @@ class DeepseekBrowserAPI:
         """
         Parameters:
         profile_dir (str): Chrome user-data dir; the login is kept there between runs.
-        headless (bool): Run without a window. Keep False for the first login and
-            whenever the anti-bot challenge must be solved by hand.
+        headless (bool): Run without a window (``--headless=new``; the
+            "HeadlessChrome" user agent is replaced by the regular one). Needs
+            a profile that is already logged in; fails fast otherwise.
         mode (str): "cdp" (default) starts the installed Chrome as a normal
             process with a debugging port and attaches to it, so the browser
             carries no automation flags. If a Chrome is already listening on
@@ -176,6 +178,15 @@ class DeepseekBrowserAPI:
 
     # ------------------------------------------------------------ lifecycle
     async def __aenter__(self):
+        try:
+            await self._start()
+        except BaseException:
+            # Do not leave a Chrome process behind when startup fails.
+            await self.__aexit__(None, None, None)
+            raise
+        return self
+
+    async def _start(self):
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self._playwright = await async_playwright().start()
         if self.mode == "cdp":
@@ -194,11 +205,42 @@ class DeepseekBrowserAPI:
         if not existing and self.mode == "persistent":
             existing = self._context.pages
         self._page = existing[0] if existing else await self._context.new_page()
+        if self.headless:
+            await self._hide_headless_user_agent()
         self._page.on("response", self._on_response)
         await self._page.route("**/api/v0/chat/completion*", self._rewrite_completion)
         await self._page.goto(BASE_URL)
         await self._ensure_logged_in()
-        return self
+
+    async def _hide_headless_user_agent(self):
+        """Headless Chrome reports "HeadlessChrome/x" as user agent, an easy
+        anti-bot signal; replace it with the regular "Chrome/x" one."""
+        cdp = await self._context.new_cdp_session(self._page)
+        version = await cdp.send("Browser.getVersion")
+        user_agent = version["userAgent"].replace("HeadlessChrome", "Chrome")
+        full_version = version["product"].split("/")[-1]
+        major = full_version.split(".")[0]
+        platform = {"win32": "Windows", "darwin": "macOS"}.get(sys.platform, "Linux")
+        brands = [
+            {"brand": "Google Chrome", "version": major},
+            {"brand": "Chromium", "version": major},
+            {"brand": "Not.A/Brand", "version": "24"},
+        ]
+        # Without metadata Chrome clears navigator.userAgentData and the
+        # sec-ch-ua headers, which is itself unusual.
+        await cdp.send("Emulation.setUserAgentOverride", {
+            "userAgent": user_agent,
+            "userAgentMetadata": {
+                "brands": brands,
+                "fullVersionList": [dict(b, version=full_version) for b in brands],
+                "fullVersion": full_version,
+                "platform": platform,
+                "platformVersion": "",
+                "architecture": "x86",
+                "model": "",
+                "mobile": False,
+            },
+        })
 
     async def _attach_cdp(self):
         if not _cdp_alive(self.cdp_port):
@@ -271,6 +313,12 @@ class DeepseekBrowserAPI:
             return
         except Exception:
             pass
+        if self.headless:
+            raise RuntimeError(
+                "Not logged in and Chrome is headless, so there is no window to "
+                "log in. Run open_login_window() (examples/browser_app.py --login) "
+                "first, then retry."
+            )
         self._log(
             "Not logged in: log in in the Chrome window "
             f"(waiting up to {int(self.login_timeout)} s). If the anti-bot check "
