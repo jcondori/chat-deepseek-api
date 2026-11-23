@@ -46,6 +46,14 @@ async def main():
     parser.add_argument("--dump", help="Save raw completion streams to this folder")
     parser.add_argument("--login", action="store_true",
                         help="Open the profile in a plain Chrome to log in, then exit")
+    parser.add_argument("--list-chats", action="store_true",
+                        help="List saved chats (id, title) and exit")
+    parser.add_argument("--delete-chat", nargs="+", metavar="ID",
+                        help="Delete the given chat ids and exit")
+    parser.add_argument("--delete-all-chats", action="store_true",
+                        help="Delete ALL saved chats and exit (asks for confirmation)")
+    parser.add_argument("--yes", action="store_true",
+                        help="Do not ask for confirmation with --delete-all-chats")
     parser.add_argument("-v", "--verbose", action="count", default=0)
     args = parser.parse_args()
 
@@ -61,6 +69,28 @@ async def main():
         verbose_level=args.verbose,
     )
     try:
+        if args.list_chats:
+            chats = await app.list_chats()
+            for chat in chats:
+                pin = "*" if chat.get("pinned") else " "
+                print(f"{pin} {chat['id']}  {chat.get('title') or ''}")
+            print(f"({len(chats)} chats)", file=sys.stderr)
+            return
+        if args.delete_chat:
+            await app.delete_chat(args.delete_chat)
+            print(f"Deleted {len(args.delete_chat)} chat(s).")
+            return
+        if args.delete_all_chats:
+            total = len(await app.list_chats())
+            if not args.yes:
+                answer = input(f"Delete ALL {total} saved chats? This cannot be undone. Type 'yes': ")
+                if answer.strip().lower() not in ("yes", "si", "sí"):
+                    print("Cancelled.")
+                    return
+            await app.delete_all_chats()
+            print(f"Deleted all chats ({total}).")
+            return
+
         await app.new_chat()
         if args.prompt:
             await ask(app, " ".join(args.prompt), args.think, args.search)

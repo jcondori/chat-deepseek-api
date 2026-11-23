@@ -15,7 +15,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Iterable, List, Optional, Union
 
 from playwright.async_api import BrowserContext, Page, Playwright, async_playwright
 
@@ -108,6 +108,30 @@ FETCH_HOOK = """
   };
 })();
 """ % json.dumps(list(COMPLETION_PATTERNS))
+
+
+# Calls a JSON endpoint of the web API from inside the page, with the session
+# token the web app keeps in localStorage. Returns {status, body}.
+API_CALL = """
+async ({method, path, query, body}) => {
+  const raw = localStorage.getItem('userToken');
+  let token = raw;
+  try { const parsed = JSON.parse(raw); token = (parsed && parsed.value) || parsed; } catch (e) {}
+  const url = new URL(path, location.origin);
+  for (const [k, v] of Object.entries(query || {})) {
+    if (v !== null && v !== undefined) url.searchParams.set(k, String(v));
+  }
+  const headers = { 'x-client-platform': 'web' };
+  if (token) headers['authorization'] = 'Bearer ' + token;
+  const init = { method, headers };
+  if (body !== null && body !== undefined) {
+    headers['content-type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  const resp = await fetch(url, init);
+  return { status: resp.status, body: await resp.text() };
+}
+"""
 
 
 def _is_completion(url: str) -> bool:
@@ -343,6 +367,72 @@ class DeepseekBrowserAPI:
         await self._page.goto(f"{BASE_URL}/a/chat/s/{chat_id}")
         await self._page.wait_for_selector(INPUT_SELECTOR, timeout=30_000)
         self.chat_id = chat_id
+
+    # ------------------------------------------------------- chat history
+    async def list_chats(self, limit: Optional[int] = None) -> List[dict]:
+        """Return the saved chats, newest first (pinned ones on top), as dicts
+        with ``id``, ``title``, ``pinned``, ``updated_at`` and ``model_type``."""
+        chats: List[dict] = []
+        seen = set()
+        query: dict = {"count": 100}
+        while True:
+            data = await self._api("GET", "/api/v0/chat_session/fetch_page", query=query)
+            page = data.get("chat_sessions") or []
+            for chat in page:
+                if chat["id"] not in seen:
+                    seen.add(chat["id"])
+                    chats.append(chat)
+            if limit is not None and len(chats) >= limit:
+                return chats[:limit]
+            if not data.get("has_more") or not page:
+                return chats
+            last = page[-1]
+            query = {
+                "count": 100,
+                "lte_cursor.pinned": "true" if last.get("pinned") else "false",
+                "lte_cursor.updated_at": last["updated_at"],
+            }
+
+    async def delete_chat(self, chat_ids: Union[str, Iterable[str]]) -> None:
+        """Delete one chat (id) or several (iterable of ids). Irreversible."""
+        ids = [chat_ids] if isinstance(chat_ids, str) else list(chat_ids)
+        if not ids:
+            return
+        async with self._lock:
+            await self._api(
+                "POST", "/api/v0/chat_session/delete", body={"chat_session_ids": ids}
+            )
+            if self.chat_id in ids:
+                await self.new_chat()
+
+    async def delete_all_chats(self) -> None:
+        """Delete every saved chat of the account (pinned ones included), like
+        "Delete all chats" in the web settings. Irreversible."""
+        async with self._lock:
+            await self._api("POST", "/api/v0/chat_session/delete_all")
+            await self.new_chat()
+
+    async def _api(self, method: str, path: str, query: Optional[dict] = None,
+                   body: Optional[dict] = None) -> dict:
+        """Call a web API endpoint from the page; return ``data.biz_data``."""
+        res = await self._page.evaluate(
+            API_CALL, {"method": method, "path": path, "query": query, "body": body}
+        )
+        text = res["body"]
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            raise RuntimeError(
+                f"{method} {path} failed with status {res['status']}: {text[:300]}"
+            ) from None
+        data = payload.get("data") or {}
+        if res["status"] != 200 or payload.get("code") != 0 or data.get("biz_code", 0) != 0:
+            raise RuntimeError(
+                f"{method} {path} failed (status {res['status']}, code "
+                f"{payload.get('code')}, biz_code {data.get('biz_code')}): "
+                f"{payload.get('msg') or data.get('biz_msg') or text[:300]}"
+            )
+        return data.get("biz_data") or {}
 
     async def chat(
         self,
