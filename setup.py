@@ -20,6 +20,9 @@ setup(
         'aiohttp>=3.9.2',
         'pydantic'
     ],
+    extras_require={
+        'browser': ['playwright>=1.40'],
+    },
     description='An unofficial Python API wrapper for chat.deepseek.com',
     long_description=read_long_description(),
     long_description_content_type='text/markdown',

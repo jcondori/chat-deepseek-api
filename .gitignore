@@ -172,3 +172,6 @@ cython_debug/
 login.json
 override_headers.json
 examples/deepseek_api
+
+# Chrome profile used by the browser client (session cookies)
+.chrome-profile/
