@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Unofficial, reverse-engineered async Python wrapper for the chat.deepseek.com web API (not the official DeepSeek platform API), published on PyPI as `chat-deepseek-api`. The import package is `chat_deepseek_api` (the README sample still uses the old `deepseek_api` name; `examples/simple_app.py` is the correct reference).
 
+`USAGE.md` is the short how-to for sessions that only need to *use* the client (CLI, Python snippet, limits, common errors); keep it in sync when the public API of `DeepseekBrowserAPI` or the example flags change.
+
 ## Commands
 
 - Install deps: `pip install -e .[browser]` into a venv (`.venv/` is gitignored). The pins in `requirements.txt` (e.g. aiohttp 3.9.2) do not build on Python 3.14; `setup.py` holds the looser `install_requires` plus the `browser` extra (Playwright). Keep both files in sync when adding a dependency.
