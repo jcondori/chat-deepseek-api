@@ -22,10 +22,14 @@ THINKING = "thinking"
 TEXT = "text"
 
 
-def _fragment_kind(fragment_type: Optional[str]) -> str:
-    if fragment_type and fragment_type.upper() in ("THINK", "THINKING"):
+def _fragment_kind(fragment_type: Optional[str]) -> Optional[str]:
+    """Delta type for a fragment, or None for fragments that are not answer text (e.g. SEARCH)."""
+    kind = (fragment_type or "").upper()
+    if kind in ("THINK", "THINKING"):
         return THINKING
-    return TEXT
+    if kind in ("", "RESPONSE", "TEXT"):
+        return TEXT
+    return None
 
 
 class StreamParser:
@@ -135,11 +139,14 @@ class StreamParser:
                 # SET: the full list again (sent at the end); emit only what is new.
                 yield from self._replace_fragments(fragments)
             return
-        # Batch of nested patches: {"p": "response", "o": "BATCH", "v": [{...}, ...]}
+        # Batch of nested patches: {"p": "response", "o": "BATCH", "v": [{"p": "fragments", "v": [...]}, ...]}
+        # Sub-paths are relative to the batch path; with web search the RESPONSE fragment arrives here.
+        last_path = self._last_path
         for sub in value:
-            if isinstance(sub, dict) and "v" in sub:
-                if sub.get("p") in ("status", "quasi_status") and sub.get("v") == "FINISHED":
-                    self.finished = True
+            if isinstance(sub, dict) and "v" in sub and sub.get("p"):
+                sub_path = f"{path}/{sub['p']}" if path else sub["p"]
+                yield from self._parse_patch({"p": sub_path, "o": sub.get("o"), "v": sub["v"]})
+        self._last_path = last_path
 
     def _parse_string(self, path: Optional[str], op, value: str) -> Iterator[MessageData]:
         if not path:
@@ -159,7 +166,8 @@ class StreamParser:
                 fragment = [TEXT, ""]
                 self._fragments.append(fragment)
             fragment[1] += value
-            yield self._piece(value, fragment[0])
+            if fragment[0]:
+                yield self._piece(value, fragment[0])
             return
         yield self._piece(value, THINKING if "thinking" in path else TEXT)
 
@@ -168,7 +176,7 @@ class StreamParser:
         kind = _fragment_kind(fragment.get("type"))
         content = fragment.get("content") or ""
         self._fragments.append([kind, content])
-        if content:
+        if content and kind:
             yield self._piece(content, kind)
 
     def _replace_fragments(self, fragments: List[dict]) -> Iterator[MessageData]:
@@ -181,7 +189,8 @@ class StreamParser:
             if content.startswith(known[1]) and len(content) > len(known[1]):
                 suffix = content[len(known[1]):]
                 known[1] = content
-                yield self._piece(suffix, known[0])
+                if known[0]:
+                    yield self._piece(suffix, known[0])
 
     def _fragment_for(self, path: str) -> Optional[list]:
         # path like "response/fragments/-1/content" or "response/fragments/2/content"
