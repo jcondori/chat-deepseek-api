@@ -298,7 +298,13 @@ class DeepseekBrowserAPI:
     async def __aexit__(self, exc_type, exc, tb):
         if self.mode == "cdp":
             if self._chrome_proc and not self.keep_open:
-                # We started this Chrome: close it (Browser.close over CDP).
+                # We started this Chrome: close it with CDP Browser.close
+                # (browser.close() on a connect_over_cdp browser only disconnects).
+                try:
+                    cdp = await self._browser.new_browser_cdp_session()
+                    await cdp.send("Browser.close")
+                except Exception:
+                    pass
                 try:
                     await self._browser.close()
                 except Exception:
