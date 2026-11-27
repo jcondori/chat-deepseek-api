@@ -274,6 +274,9 @@ class DeepseekBrowserAPI:
                 f"--user-data-dir={self.profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
+                # System-installed extensions (Acrobat, IDM...) load in every
+                # profile and took ~600 MB of the ~1.1 GB measured.
+                "--disable-extensions",
             ]
             if self.headless:
                 args.append("--headless=new")
